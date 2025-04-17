@@ -11,6 +11,9 @@ CORS(app)
 
 @app.route('/')
 
+def index():
+    return render_template('index.html')
+
 # ========== Load and preprocess dataset ==========
 df = pd.read_csv('TMDB_movie_dataset_cleaned.csv')
 
