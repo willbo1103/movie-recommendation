@@ -9,6 +9,7 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
+@app.route('/')
 
 # ========== Load and preprocess dataset ==========
 df = pd.read_csv('TMDB_movie_dataset_cleaned.csv')
