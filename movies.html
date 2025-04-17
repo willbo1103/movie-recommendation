@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Movie Recommendation Software</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+
+  <h1>Movie Recommendation Software</h1>
+  <h2>Select your favorite movies to get personalized recommendations!</h2>
+
+  <div id="search-section">
+    <input type="text" id="searchInput" placeholder="Search for a movie..." />
+  </div>
+
+  <div id="movie-list">Loading movies...</div>
+
+  <h2>Your Favorite Movies</h2>
+  <div id="my-movie-list">
+    <p>No movies added yet!</p>
+  </div>
+
+  <br>
+  <button id="submit-btn">Get Recommendations</button>
+
+  <div id="recommendations"></div>
+
+  <!-- Hover Display Info Section -->
+  <div id="hover-display" class="hidden">
+    <button id="hover-close" class="close-button">×</button>
+    <img id="hover-backdrop" src="" alt="Backdrop" width="160" />
+    <div id="hover-description">
+      <h2 id="hover-title"></h2>
+      <p id="hover-overview"></p>
+    </div>
+  </div>
+
+  <!-- Loading Spinner with Cancel Button -->
+  <div id="loading-spinner" class="hidden">
+    <img src="https://media2.giphy.com/media/3o7bu3XilJ5BOiSGic/200w.gif" alt="Loading..." />
+    <p>Fetching recommendations...</p>
+    <button id="cancel-btn">Cancel</button>
+  </div>
+
+  <script>
+    const csvUrl = "https://raw.githubusercontent.com/willbo1103/movie-recommendation/refs/heads/main/TMDB_movie_dataset_cleaned.csv";
+    let allMovies = [];
+    let filteredMovies = [];
+    let selectedMovies = [];
+    let currentAbortController = null;
+
+    fetch(csvUrl)
+      .then(response => response.text())
+      .then(csvText => {
+        Papa.parse(csvText, {
+          header: true,
+          skipEmptyLines: true,
+          complete: function(results) {
+            allMovies = results.data;
+            updateFilteredMovies();
+          }
+        });
+      })
+      .catch(error => {
+        document.getElementById('movie-list').textContent = "Failed to load movies.";
+        console.error("Error loading CSV:", error);
+      });
+
+    document.getElementById('searchInput').addEventListener('input', function () {
+      updateFilteredMovies();
+    });
+
+    function updateFilteredMovies() {
+      const query = document.getElementById('searchInput').value.toLowerCase();
+      filteredMovies = allMovies.filter(movie =>
+        movie.title &&
+        movie.title.toLowerCase().includes(query) &&
+        !selectedMovies.find(m => m.id === movie.id)
+      );
+      displayMovies(filteredMovies);
+    }
+
+    function displayMovies(movies) {
+      const movieList = document.getElementById('movie-list');
+      movieList.innerHTML = '';
+
+      if (movies.length === 0) {
+        movieList.textContent = 'No movies found.';
+        return;
+      }
+
+      movies.forEach(movie => {
+        const title = movie.title || 'Untitled';
+        const date = movie.release_date || '';
+        const year = date ? new Date(date).getFullYear() : 'Unknown Year';
+
+        const div = document.createElement('div');
+        div.className = 'movie-item';
+
+        const movieInfoDiv = document.createElement('div');
+        movieInfoDiv.className = 'movie-info';
+        movieInfoDiv.textContent = `${title} (${year})`;
+
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'button-container';
+
+        const button = document.createElement('button');
+        button.textContent = "Add to Favorites";
+        button.addEventListener('click', function () {
+          addMovieToList(movie);
+        });
+
+        buttonContainer.appendChild(button);
+        div.appendChild(buttonContainer);
+        div.appendChild(movieInfoDiv);
+        movieList.appendChild(div);
+      });
+    }
+
+    function addMovieToList(movie) {
+      if (!selectedMovies.find(m => m.id === movie.id)) {
+        selectedMovies.push(movie);
+        displaySelectedMovies();
+        updateFilteredMovies();
+      }
+    }
+
+    function removeMovieFromList(movie) {
+      selectedMovies = selectedMovies.filter(m => m.id !== movie.id);
+      displaySelectedMovies();
+      updateFilteredMovies();
+    }
+
+    function displaySelectedMovies() {
+      const myMovieList = document.getElementById('my-movie-list');
+      myMovieList.innerHTML = '';
+
+      if (selectedMovies.length === 0) {
+        myMovieList.innerHTML = '<p>No movies added yet!</p>';
+        return;
+      }
+
+      selectedMovies.forEach(movie => {
+        const div = document.createElement('div');
+        div.className = 'selected-movie-item';
+
+        const title = movie.title || 'Untitled';
+        const date = movie.release_date || '';
+        const year = date ? new Date(date).getFullYear() : 'Unknown Year';
+
+        const text = document.createElement('span');
+        text.textContent = `${title} (${year})`;
+
+        const removeButton = document.createElement('button');
+        removeButton.textContent = "×";
+        removeButton.className = "remove-button";
+        removeButton.addEventListener('click', function () {
+          removeMovieFromList(movie);
+        });
+
+        div.appendChild(text);
+        div.appendChild(removeButton);
+        myMovieList.appendChild(div);
+      });
+    }
+
+    document.getElementById('submit-btn').addEventListener('click', function() {
+      const movieIDs = selectedMovies.map(movie => parseInt(movie.id));
+
+      if (movieIDs.length === 0) {
+        alert("Please select at least one movie!");
+        return;
+      }
+
+      document.getElementById('loading-spinner').classList.remove('hidden');
+
+      if (currentAbortController) {
+        currentAbortController.abort();
+      }
+
+      currentAbortController = new AbortController();
+
+      const payload = { ids: movieIDs };
+
+      fetch('http://127.0.0.1:5000/recommend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: currentAbortController.signal,
+      })
+      .then(response => response.json())
+      .then(data => {
+        document.getElementById('loading-spinner').classList.add('hidden');
+        if (data.error) {
+          alert(data.error);
+        } else {
+          displayRecommendations(data.recommendations);
+        }
+      })
+      .catch(error => {
+        document.getElementById('loading-spinner').classList.add('hidden');
+        if (error.name === 'AbortError') {
+          console.log("Request was cancelled.");
+        } else {
+          console.error("Error sending request:", error);
+          alert("An error occurred while fetching recommendations.");
+        }
+      });
+    });
+
+    document.getElementById('cancel-btn').addEventListener('click', () => {
+      if (currentAbortController) {
+        currentAbortController.abort();
+        currentAbortController = null;
+      }
+      document.getElementById('loading-spinner').classList.add('hidden');
+    });
+
+    function displayRecommendations(recs) {
+      const container = document.getElementById('recommendations');
+      container.innerHTML = "<h2>Recommended Movies by Genre:</h2>";
+
+      if (!Array.isArray(recs) || recs.length === 0) {
+        const noResults = document.createElement('p');
+        noResults.textContent = "No recommendations found.";
+        container.appendChild(noResults);
+        return;
+      }
+
+      const genresList = [
+        "Horror", "TV Movie", "Comedy", "Action", "Science Fiction", "Thriller",
+        "Family", "Fantasy", "Adventure", "Western", "Mystery", "Romance",
+        "Documentary", "Crime", "Animation", "Foreign", "Music", "Drama",
+        "War", "History"
+      ];
+
+      const genreBuckets = {};
+      genresList.forEach(genre => genreBuckets[genre] = []);
+
+      const decadeBuckets = {
+        "1930s": [], "1940s": [], "1950s": [], "1960s": [],
+        "1970s": [], "1980s": [], "1990s": [], "2000s": [],
+        "2010s": [], "2020s": []
+      };
+
+      const foreignMovies = [];
+
+      for (const rec of recs) {
+        if (!rec.genres || !rec.release_date) continue;
+
+        const recGenres = rec.genres.split(',').map(g => g.trim());
+        const year = parseInt(rec.release_date.slice(0, 4));
+
+        // Genre classification
+        for (const genre of recGenres) {
+          if (genresList.includes(genre) && genreBuckets[genre].length < 20) {
+            genreBuckets[genre].push(rec);
+          }
+        }
+
+        // Decade classification
+        if (year >= 1930 && year < 1940 && decadeBuckets["1930s"].length < 20) decadeBuckets["1930s"].push(rec);
+        else if (year >= 1940 && year < 1950 && decadeBuckets["1940s"].length < 20) decadeBuckets["1940s"].push(rec);
+        else if (year >= 1950 && year < 1960 && decadeBuckets["1950s"].length < 20) decadeBuckets["1950s"].push(rec);
+        else if (year >= 1960 && year < 1970 && decadeBuckets["1960s"].length < 20) decadeBuckets["1960s"].push(rec);
+        else if (year >= 1970 && year < 1980 && decadeBuckets["1970s"].length < 20) decadeBuckets["1970s"].push(rec);
+        else if (year >= 1980 && year < 1990 && decadeBuckets["1980s"].length < 20) decadeBuckets["1980s"].push(rec);
+        else if (year >= 1990 && year < 2000 && decadeBuckets["1990s"].length < 20) decadeBuckets["1990s"].push(rec);
+        else if (year >= 2000 && year < 2010 && decadeBuckets["2000s"].length < 20) decadeBuckets["2000s"].push(rec);
+        else if (year >= 2010 && year < 2020 && decadeBuckets["2010s"].length < 20) decadeBuckets["2010s"].push(rec);
+        else if (year >= 2020 && year < 2030 && decadeBuckets["2020s"].length < 20) decadeBuckets["2020s"].push(rec);
+
+        // Foreign movies classification
+        if (rec.original_language && rec.original_language !== 'en' && foreignMovies.length < 20) {
+          foreignMovies.push(rec);
+        }
+      }
+
+      // Shuffle function
+      const shuffleArray = (arr) => {
+        for (let i = arr.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+      };
+
+      // Shuffle all buckets
+      Object.values(genreBuckets).forEach(shuffleArray);
+      Object.values(decadeBuckets).forEach(shuffleArray);
+      shuffleArray(foreignMovies);
+
+      const renderSection = (title, movies) => {
+        const section = document.createElement('div');
+        section.className = 'genre-section';
+
+        const heading = document.createElement('h3');
+        heading.textContent = title;
+        section.appendChild(heading);
+
+        const scrollContainer = document.createElement('div');
+        scrollContainer.className = 'poster-scroll';
+
+        movies.forEach(movie => {
+          const card = document.createElement('div');
+          card.className = 'poster-card';
+
+          if (movie.poster_path) {
+            const img = document.createElement('img');
+            img.src = `https://image.tmdb.org/t/p/original${movie.poster_path}`;
+            img.alt = movie.title;
+            img.className = 'poster-image';
+            card.appendChild(img);
+
+            card.addEventListener('click', () => showHoverInfo(movie));
+          }
+
+          scrollContainer.appendChild(card);
+        });
+
+        section.appendChild(scrollContainer);
+        container.appendChild(section);
+      };
+
+      // Render genre-based sections
+      genresList.forEach(genre => {
+        if (genreBuckets[genre].length > 0) {
+          renderSection(`${genre} Recommendations`, genreBuckets[genre]);
+        }
+      });
+
+      // Render decade-based sections
+      const decadeHeading = document.createElement('h2');
+      decadeHeading.textContent = "Recommended Movies by Decade:";
+      container.appendChild(decadeHeading);
+
+      Object.entries(decadeBuckets).forEach(([decade, movies]) => {
+        if (movies.length > 0) {
+          renderSection(`${decade} Movies`, movies);
+        }
+      });
+
+      // Render foreign movies section
+      if (foreignMovies.length > 0) {
+        const foreignHeading = document.createElement('h2');
+        foreignHeading.textContent = "Foreign Language Movies:";
+        container.appendChild(foreignHeading);
+        renderSection("Foreign Movies", foreignMovies);
+      }
+    }
+
+    function showHoverInfo(movie) {
+      console.log("Movie clicked:", movie.title);
+      const hover = document.getElementById('hover-display');
+      document.getElementById('hover-title').textContent = movie.title || 'Untitled';
+      document.getElementById('hover-overview').textContent = movie.overview || 'No description available';
+      document.getElementById('hover-backdrop').src = movie.backdrop_path 
+        ? `https://image.tmdb.org/t/p/original${movie.backdrop_path}` : '';
+      hover.classList.remove('hidden');
+    }
+
+    function hideHoverInfo() {
+      document.getElementById('hover-display').classList.add('hidden');
+    }
+
+    document.getElementById('hover-close').addEventListener('click', hideHoverInfo);
+
+</script>
+
+
+</body>
+</html>
